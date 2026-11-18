@@ -18,8 +18,8 @@
 	<packaging>pom</packaging>
 
     <modules>
-        <module>ewm-main-service</module>
         <module>ewm-stats-service</module>
+        <module>core</module>
     </modules>
 
 	<properties>
