@@ -1,13 +1,32 @@
+
+name: ewm-spring-cloud
+
 services:
+  discovery-server:
+    build:
+      context: ./infra/discovery-server
+      dockerfile: Dockerfile
+    ports:
+      - "8761:8761"
+
+  config-server:
+    build:
+      context: ./infra/config-server
+      dockerfile: Dockerfile
+    depends_on:
+      - discovery-server
+    environment:
+      EUREKA_URL: http://discovery-server:8761/eureka/
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+
   stats-db:
     image: postgres:16.1
-    container_name: ewm-stats-db
-    ports:
-      - "5433:5432"
     environment:
-      - POSTGRES_DB=stats
-      - POSTGRES_USER=stats_user
-      - POSTGRES_PASSWORD=stats_password
+      POSTGRES_DB: stats
+      POSTGRES_USER: stats_user
+      POSTGRES_PASSWORD: stats_password
+    volumes:
+      - stats_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stats_user -d stats"]
       interval: 10s
@@ -18,38 +37,70 @@ services:
     build:
       context: ./ewm-stats-service
       dockerfile: Dockerfile
-    container_name: ewm-stats-service
-    ports:
-      - "9090:9090"
     depends_on:
       stats-db:
         condition: service_healthy
+      discovery-server:
+        condition: service_started
+      config-server:
+        condition: service_started
     environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://stats-db:5432/stats
-      - SPRING_DATASOURCE_USERNAME=stats_user
-      - SPRING_DATASOURCE_PASSWORD=stats_password
-      - SPRING_JPA_HIBERNATE_DDL_AUTO=create
+      EUREKA_URL: http://discovery-server:8761/eureka/
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://stats-db:5432/stats
+      SPRING_DATASOURCE_USERNAME: stats_user
+      SPRING_DATASOURCE_PASSWORD: stats_password
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
 
   ewm-db:
     image: postgres:16.1
-    container_name: ewm-main-db
-    ports:
-      - "5432:5432"
     environment:
-      - POSTGRES_DB=ewm
-      - POSTGRES_USER=ewm_user
-      - POSTGRES_PASSWORD=ewm_password
+      POSTGRES_DB: ewm
+      POSTGRES_USER: ewm_user
+      POSTGRES_PASSWORD: ewm_password
+    volumes:
+      - ewm_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ewm_user -d ewm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   ewm-service:
     build:
-      context: ./ewm-main-service
+      context: ./core/main-service
       dockerfile: Dockerfile
-    container_name: ewm-main-service
+    depends_on:
+      ewm-db:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+      config-server:
+        condition: service_started
+      stats-server:
+        condition: service_started
+    environment:
+      EUREKA_URL: http://discovery-server:8761/eureka/
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://ewm-db:5432/ewm
+      SPRING_DATASOURCE_USERNAME: ewm_user
+      SPRING_DATASOURCE_PASSWORD: ewm_password
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
+  gateway-server:
+    build:
+      context: ./infra/gateway-server
+      dockerfile: Dockerfile
     ports:
       - "8080:8080"
     depends_on:
-      - ewm-db
+      - discovery-server
+      - config-server
+      - ewm-service
     environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://ewm-db:5432/ewm
-      - SPRING_DATASOURCE_USERNAME=ewm_user
-      - SPRING_DATASOURCE_PASSWORD=ewm_password
+      EUREKA_URL: http://discovery-server:8761/eureka/
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+
+volumes:
+  ewm_pgdata:
+  stats_pgdata:

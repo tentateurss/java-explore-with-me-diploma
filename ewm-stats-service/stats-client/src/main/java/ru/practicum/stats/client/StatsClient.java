@@ -3,19 +3,19 @@ package ru.practicum.stats.client;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Nullable;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.ClientHttpResponse;
-import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import ru.practicum.stats.client.exceptions.StatsClientRequestException;
 import ru.practicum.stats.client.exceptions.StatsServerException;
 import ru.practicum.stats.dto.ErrorResponse;
 import ru.practicum.stats.dto.HitRequestDto;
 import ru.practicum.stats.dto.ViewStats;
+import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.discovery.DiscoveryClient;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -25,18 +25,17 @@ import java.util.List;
 import static ru.practicum.stats.dto.util.DateTimeFormatters.STANDARD;
 
 @Slf4j
-@Service
 public class StatsClient {
 
-    private final RestClient client;
+    private final RestClient.Builder restClientBuilder;
+    private final DiscoveryClient discoveryClient;
     private final ObjectMapper objectMapper;
 
-    public StatsClient(@Value("${stats-server.url}") String baseUrl,
-                       final RestClient.Builder builder,
-                       final ObjectMapper objectMapper) {
-        this.client = builder
-                .baseUrl(baseUrl)
-                .build();
+    public StatsClient(DiscoveryClient discoveryClient,
+                       RestClient.Builder restClientBuilder,
+                       ObjectMapper objectMapper) {
+        this.discoveryClient = discoveryClient;
+        this.restClientBuilder = restClientBuilder;
         this.objectMapper = objectMapper;
     }
 
@@ -52,7 +51,7 @@ public class StatsClient {
                 .timestamp(timestampStr)
                 .build();
 
-        return client.post()
+        return buildClient().post()
                 .uri("/hit")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(hit)
@@ -71,7 +70,7 @@ public class StatsClient {
         log.info("=== start={}, end={}, uris={}, unique={}", start, end,
                 uris != null ? Arrays.toString(uris) : "null", unique);
 
-        ResponseEntity<List<ViewStats>> response = client.get()
+        ResponseEntity<List<ViewStats>> response = buildClient().get()
                 .uri(uriBuilder -> {
                     var builder = uriBuilder.path("/stats")
                             .queryParam("start", start)
@@ -123,5 +122,23 @@ public class StatsClient {
             log.error("stats-client: не удалось прочитать сообщение об ошибке. Код ошибки: 4хх.");
             throw new StatsClientRequestException("Неизвестная ошибка обработки запроса к серверу статистики.");
         }
+    }
+
+    private RestClient buildClient() {
+        List<ServiceInstance> instances = discoveryClient.getInstances("stats-server");
+
+        if (instances.isEmpty()) {
+            throw new StatsServerException(
+                    "Сервис stats-server не найден в Eureka"
+            );
+        }
+
+        String baseUrl = instances.get(0).getUri().toString();
+
+        log.debug("Адрес stats-server из Eureka: {}", baseUrl);
+
+        return restClientBuilder.clone()
+                .baseUrl(baseUrl)
+                .build();
     }
 }

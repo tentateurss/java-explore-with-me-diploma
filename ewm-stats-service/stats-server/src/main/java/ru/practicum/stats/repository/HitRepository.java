@@ -13,19 +13,39 @@ import java.util.List;
 @Repository
 public interface HitRepository extends JpaRepository<Hit, Long> {
 
+    // все посещения, с фильтром по URI
     @Query("SELECT new ru.practicum.stats.dto.ViewStats(h.app, h.uri, COUNT(h.id)) "
             + "FROM Hit h "
-            + "WHERE (COALESCE(:uris, NULL) IS NULL OR h.uri IN :uris) "
+            + "WHERE h.uri IN :uris "
             + "AND h.timestamp BETWEEN :start AND :end "
             + "GROUP BY h.app, h.uri "
             + "ORDER BY COUNT(h.id) DESC")
-    List<ViewStats> getHitsByDateLimits(LocalDateTime start, LocalDateTime end, @Param("uris") List<String> uris);
+    List<ViewStats> getHitsByDateLimits(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end,
+            @Param("uris") List<String> uris);
 
+    // уникальные посещения, с фильтром по URI
     @Query("SELECT new ru.practicum.stats.dto.ViewStats(h.app, h.uri, COUNT(DISTINCT h.ip)) "
             + "FROM Hit h "
-            + "WHERE (COALESCE(:uris, NULL) IS NULL OR h.uri IN :uris) "
+            + "WHERE h.uri IN :uris "
             + "AND h.timestamp BETWEEN :start AND :end "
             + "GROUP BY h.app, h.uri "
             + "ORDER BY COUNT(DISTINCT h.ip) DESC")
-    List<ViewStats> getHitsByDateAndUniqueIpLimits(LocalDateTime start, LocalDateTime end, @Param("uris") List<String> uris);
+    List<ViewStats> getHitsByDateAndUniqueIpLimits(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end,
+            @Param("uris") List<String> uris);
+
+    // все посещения, без фильтра по URI
+    @Query("SELECT new ru.practicum.stats.dto.ViewStats(h.app, h.uri, COUNT(h.id)) "
+            + "FROM Hit h "
+            + "WHERE h.timestamp BETWEEN :start AND :end "
+            + "GROUP BY h.app, h.uri "
+            + "ORDER BY COUNT(h.id) DESC")
+    List<ViewStats> getHitsByDateLimitsAll(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    // уникальные посещения, без фильтра по URI
+    @Query("SELECT new ru.practicum.stats.dto.ViewStats(h.app, h.uri, COUNT(DISTINCT h.ip)) "
+            + "FROM Hit h "
+            + "WHERE h.timestamp BETWEEN :start AND :end "
+            + "GROUP BY h.app, h.uri "
+            + "ORDER BY COUNT(DISTINCT h.ip) DESC")
+    List<ViewStats> getHitsByDateAndUniqueIpLimitsAll(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 }
