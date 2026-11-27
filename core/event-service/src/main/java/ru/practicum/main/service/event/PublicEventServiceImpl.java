@@ -1,0 +1,241 @@
+package ru.practicum.main.service.event;
+
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import ru.practicum.main.dto.event.EventFullDto;
+import ru.practicum.main.dto.event.EventSearchParams;
+import ru.practicum.main.dto.event.EventShortDto;
+import ru.practicum.main.dto.event.EventStatistics;
+import ru.practicum.main.enums.EventState;
+import ru.practicum.main.exception.NotFoundException;
+import ru.practicum.main.mapper.EventMapper;
+import ru.practicum.main.model.Event;
+import ru.practicum.main.repository.EventRepository;
+import ru.practicum.stats.client.StatsClient;
+import ru.practicum.stats.dto.ViewStats;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import static ru.practicum.stats.dto.util.DateTimeFormatters.STANDARD;
+
+@Service
+@Slf4j
+@RequiredArgsConstructor
+public class PublicEventServiceImpl implements PublicEventService {
+
+    private final EventRepository eventRepository;
+    private final ConfirmedRequestCounter confirmedRequestCounter;
+    private final StatsClient statsClient;
+
+    @Override
+    public List<EventShortDto> getAllEvents(EventSearchParams params) {
+        return getFilteredEvents(params, null);
+    }
+
+    @Override
+    public List<EventShortDto> getEventsByAuthorIds(EventSearchParams params, List<Long> authorIds) {
+        if (authorIds == null || authorIds.isEmpty()) {
+            return List.of();
+        }
+
+        return getFilteredEvents(params, authorIds.stream().distinct().toList());
+    }
+
+    private List<EventShortDto> getFilteredEvents(EventSearchParams params, List<Long> authorIds) {
+
+        log.info("PublicEventService: получение событий с параметрами {}.", params);
+
+
+        saveHit(params.getRequest());
+
+        if (params.getFrom() == null) {
+            params.setFrom(0);
+        }
+
+        if (params.getSize() == null) {
+            params.setSize(10);
+        }
+
+        if (params.getRangeStart() == null && params.getRangeEnd() == null) {
+            params.setRangeStart(LocalDateTime.now());
+        }
+
+
+        if (params.getCategories() != null && params.getCategories().isEmpty()) {
+            params.setCategories(null);
+        }
+
+        PageRequest pageRequest;
+
+        if ("EVENT_DATE".equals(params.getSort())) {
+            pageRequest = PageRequest.of(
+                    params.getFrom() / params.getSize(),
+                    params.getSize(),
+                    Sort.by("eventDate").ascending()
+            );
+        } else {
+            pageRequest = PageRequest.of(
+                    params.getFrom() / params.getSize(),
+                    params.getSize()
+            );
+        }
+
+        List<Event> events;
+
+        if (authorIds == null) {
+            events = eventRepository.findPublishedEvents(
+                    params.getCategories() == null ? List.of(-1L) : params.getCategories(),
+                    params.getCategories() == null,
+                    params.getRangeStart(),
+                    params.getRangeEnd(),
+                    pageRequest
+            );
+        } else {
+            events = eventRepository.findPublishedEventsByAuthors(
+                    authorIds,
+                    params.getCategories() == null ? List.of(-1L) : params.getCategories(),
+                    params.getCategories() == null,
+                    params.getRangeStart(),
+                    params.getRangeEnd(),
+                    pageRequest
+            );
+        }
+
+        if (params.getText() != null && !params.getText().isBlank()) {
+            String searchText = params.getText().toLowerCase();
+            events = events.stream()
+                    .filter(event ->
+                            event.getAnnotation().toLowerCase().contains(searchText) ||
+                                    event.getDescription().toLowerCase().contains(searchText)
+                    )
+                    .collect(Collectors.toList());
+        }
+
+        if (params.getPaid() != null) {
+            events = events.stream()
+                    .filter(event -> event.getPaid().equals(params.getPaid()))
+                    .collect(Collectors.toList());
+        }
+
+        Map<Long, Long> confirmedRequestsMap = confirmedRequestCounter.countConfirmed(
+                events.stream().map(Event::getId).toList()
+        );
+
+        Map<Long, EventStatistics> statsMap = getEventStatistics(events);
+
+        List<EventShortDto> result = events.stream()
+                .map(event -> EventMapper.toShortDto(event, statsMap.getOrDefault(event.getId(),
+                        new EventStatistics(0, 0))))
+                .collect(Collectors.toList());
+
+        if ("VIEWS".equals(params.getSort())) {
+            result.sort((e1, e2) -> Long.compare(e2.getViews(), e1.getViews()));
+        }
+
+        return result;
+    }
+
+    @Override
+    public EventFullDto getEventById(Long id, HttpServletRequest request) {
+        log.info("PublicEventService: получение события по id={}", id);
+
+        Event event = eventRepository.findByIdAndState(id, EventState.PUBLISHED)
+                .orElseThrow(() -> new NotFoundException(String.format("Опубликованное событие с id=%d не найдено", id)));
+
+        saveHit(request);
+
+        Map<Long, EventStatistics> statsMap = getEventStatistics(List.of(event));
+        EventStatistics stats = statsMap.getOrDefault(id, new EventStatistics(0, 0));
+
+        return EventMapper.toFullDto(event, stats);
+    }
+
+    private Map<Long, EventStatistics> getEventStatistics(List<Event> events) {
+        if (events == null || events.isEmpty()) {
+            return Map.of();
+        }
+
+        try {
+            Map<Long, Long> confirmedRequestsMap = confirmedRequestCounter.countConfirmed(
+                    events.stream().map(Event::getId).toList()
+            );
+
+            List<String> uris = events.stream()
+                    .map(event -> "/events/" + event.getId())
+                    .collect(Collectors.toList());
+
+            log.info("=== GETTING STATS FOR URIS: {}", uris);
+
+            LocalDateTime start = LocalDateTime.of(2020, 1, 1, 0, 0, 0);
+            LocalDateTime end = LocalDateTime.now().plusDays(1);
+
+            List<ViewStats> viewStats = statsClient.getStats(
+                    start.format(STANDARD),
+                    end.format(STANDARD),
+                    uris.toArray(new String[0]),
+                    true
+            ).getBody();
+
+            log.info("=== VIEW STATS RESPONSE: {}", viewStats);
+
+            Map<Long, Long> viewsMap = Map.of();
+            if (viewStats != null && !viewStats.isEmpty()) {
+                viewsMap = viewStats.stream()
+                        .collect(Collectors.toMap(
+                                stat -> extractEventIdFromUri(stat.getUri()),
+                                ViewStats::getHits
+                        ));
+            }
+
+            log.info("=== VIEWS MAP: {}", viewsMap);
+
+            Map<Long, Long> finalViewsMap = viewsMap;
+            return events.stream()
+                    .collect(Collectors.toMap(
+                            Event::getId,
+                            event -> new EventStatistics(
+                                    confirmedRequestsMap.getOrDefault(event.getId(), 0L),
+                                    finalViewsMap.getOrDefault(event.getId(), 0L)
+                            )
+                    ));
+
+        } catch (Exception e) {
+            log.error("Ошибка при получении статистики из сервиса статистики", e);
+            return events.stream()
+                    .collect(Collectors.toMap(
+                            Event::getId,
+                            event -> new EventStatistics(0L, 0L)
+                    ));
+        }
+    }
+
+    private Long extractEventIdFromUri(String uri) {
+        String[] parts = uri.split("/");
+        return Long.parseLong(parts[parts.length - 1]);
+    }
+
+    private void saveHit(HttpServletRequest request) {
+        try {
+            String uri = request.getRequestURI();
+            String ip = request.getRemoteAddr();
+            log.info("=== SAVING HIT: uri={}, ip={}", uri, ip);
+
+            statsClient.saveHit(
+                    "ewm-main-service",
+                    uri,
+                    ip,
+                    LocalDateTime.now()
+            );
+            log.info("=== HIT SAVED SUCCESSFULLY");
+        } catch (Exception e) {
+            log.error("=== FAILED TO SAVE HIT: {}", e.getMessage(), e);
+        }
+    }
+}

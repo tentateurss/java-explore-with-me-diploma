@@ -52,39 +52,40 @@ services:
       SPRING_DATASOURCE_PASSWORD: stats_password
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
 
-  ewm-db:
+  user-db:
     image: postgres:16.1
     environment:
-      POSTGRES_DB: ewm
-      POSTGRES_USER: ewm_user
-      POSTGRES_PASSWORD: ewm_password
+      POSTGRES_DB: users
+      POSTGRES_USER: user_user
+      POSTGRES_PASSWORD: user_password
     volumes:
-      - ewm_pgdata:/var/lib/postgresql/data
+      - user_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ewm_user -d ewm"]
+      test: ["CMD-SHELL", "pg_isready -U user_user -d users"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  ewm-service:
+  user-service:
     build:
-      context: ./core/main-service
+      context: ./core/user-service
       dockerfile: Dockerfile
+    ports:
+      - "18081:8081"
     depends_on:
-      ewm-db:
+      user-db:
         condition: service_healthy
       discovery-server:
         condition: service_started
       config-server:
         condition: service_started
-      stats-server:
-        condition: service_started
     environment:
+      SERVER_PORT: "8081"
       EUREKA_URL: http://discovery-server:8761/eureka/
       EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
-      SPRING_DATASOURCE_URL: jdbc:postgresql://ewm-db:5432/ewm
-      SPRING_DATASOURCE_USERNAME: ewm_user
-      SPRING_DATASOURCE_PASSWORD: ewm_password
+      SPRING_DATASOURCE_URL: jdbc:postgresql://user-db:5432/users
+      SPRING_DATASOURCE_USERNAME: user_user
+      SPRING_DATASOURCE_PASSWORD: user_password
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
 
   gateway-server:
@@ -96,11 +97,122 @@ services:
     depends_on:
       - discovery-server
       - config-server
-      - ewm-service
     environment:
       EUREKA_URL: http://discovery-server:8761/eureka/
       EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
 
+  event-db:
+    image: postgres:16.1
+    environment:
+      POSTGRES_DB: events
+      POSTGRES_USER: event_user
+      POSTGRES_PASSWORD: event_password
+    volumes:
+      - event_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U event_user -d events"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  event-service:
+    build:
+      context: ./core/event-service
+      dockerfile: Dockerfile
+    ports:
+      - "18082:8082"
+    depends_on:
+      event-db:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+      config-server:
+        condition: service_started
+    environment:
+      SERVER_PORT: "8082"
+      EUREKA_URL: http://discovery-server:8761/eureka/
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://event-db:5432/events
+      SPRING_DATASOURCE_USERNAME: event_user
+      SPRING_DATASOURCE_PASSWORD: event_password
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
+  subscription-db:
+    image: postgres:16.1
+    environment:
+      POSTGRES_DB: subscriptions
+      POSTGRES_USER: subscription_user
+      POSTGRES_PASSWORD: subscription_password
+    volumes:
+      - subscription_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U subscription_user -d subscriptions"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  subscription-service:
+    build:
+      context: ./core/subscription-service
+      dockerfile: Dockerfile
+    ports:
+      - "18083:8083"
+    depends_on:
+      subscription-db:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+      config-server:
+        condition: service_started
+    environment:
+      SERVER_PORT: "8083"
+      EUREKA_URL: http://discovery-server:8761/eureka/
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://subscription-db:5432/subscriptions
+      SPRING_DATASOURCE_USERNAME: subscription_user
+      SPRING_DATASOURCE_PASSWORD: subscription_password
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
+  request-db:
+    image: postgres:16.1
+    environment:
+      POSTGRES_DB: requests
+      POSTGRES_USER: request_user
+      POSTGRES_PASSWORD: request_password
+    volumes:
+      - request_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U request_user -d requests"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  request-service:
+    build:
+      context: ./core/request-service
+      dockerfile: Dockerfile
+    ports:
+      - "18084:8084"
+    depends_on:
+      request-db:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+      config-server:
+        condition: service_started
+    environment:
+      SERVER_PORT: "8084"
+      EUREKA_URL: http://discovery-server:8761/eureka/
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://request-db:5432/requests
+      SPRING_DATASOURCE_USERNAME: request_user
+      SPRING_DATASOURCE_PASSWORD: request_password
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
 volumes:
+  request_pgdata:
+  subscription_pgdata:
+  event_pgdata:
+  user_pgdata:
   ewm_pgdata:
   stats_pgdata:
