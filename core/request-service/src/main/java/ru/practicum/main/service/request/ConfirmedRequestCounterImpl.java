@@ -26,11 +26,10 @@ public class ConfirmedRequestCounterImpl implements ConfirmedRequestCounter {
 
         Map<Long, Long> result = new HashMap<>();
 
-        requestRepository.countByEventIdsAndStatus(
-                eventIds, RequestStatus.CONFIRMED
-        ).forEach(row -> result.put(
-                ((Number) row[0]).longValue(),
-                ((Number) row[1]).longValue()
+        requestRepository.countByEventIdsAndStatus(eventIds, RequestStatus.CONFIRMED)
+                .forEach(row -> result.put(
+                row.eventId(),
+                row.count()
         ));
 
         return result;
